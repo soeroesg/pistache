@@ -146,7 +146,6 @@ if (PISTACHE_BUILD_FUZZ)
 endif()
 
 # format target
-
 add_custom_target(format
     COMMAND
         ./tools/format.sh
