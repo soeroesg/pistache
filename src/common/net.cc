@@ -1,13 +1,13 @@
 /*
  * SPDX-FileCopyrightText: 2015 Mathieu Stefani
- *
+ * SPDX-FileCopyrightText: 2023 Andrea Pappacoda
  * SPDX-License-Identifier: Apache-2.0
  */
 
-/* net.cc
-   Mathieu Stefani, 12 August 2015
-
-*/
+/*
+ * net.cc
+ * Mathieu Stefani, 12 August 2015
+ */
 
 #include <pistache/common.h>
 #include <pistache/config.h>
@@ -19,6 +19,7 @@
 #include <vector>
 
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 
 #include <arpa/inet.h>
@@ -29,104 +30,14 @@
 
 namespace Pistache
 {
-
-    namespace
+    namespace helpers
     {
-        std::vector<std::string> HostToIPv4(const std::string& host,
-                                            const std::string& port)
+        Address httpAddr(const std::string_view& view)
         {
-            std::vector<std::string> result;
-
-            struct addrinfo hints;
-            memset(&hints, 0, sizeof(struct addrinfo));
-            hints.ai_family   = AF_INET;
-            hints.ai_socktype = SOCK_STREAM; /* Stream socket */
-            hints.ai_flags    = 0;
-            hints.ai_protocol = 0;
-
-            AddrInfo addressInfo;
-
-            try
-            {
-                addressInfo.invoke(host.c_str(), port.c_str(), &hints);
-            }
-            catch (const std::runtime_error&)
-            {
-                throw std::invalid_argument("Failed to get IPv4 addresses");
-            }
-
-            const addrinfo* addrs = addressInfo.get_info_ptr();
-            if (addrs == nullptr)
-            {
-                throw std::invalid_argument("Failed to get IPv4 addresses");
-            }
-
-            for (const addrinfo* addr = addrs; addr; addr = addr->ai_next)
-            {
-                struct sockaddr_in* ipv4     = reinterpret_cast<struct sockaddr_in*>(addr->ai_addr);
-                char buffer[INET_ADDRSTRLEN] = {
-                    0,
-                };
-
-                inet_ntop(addr->ai_family, &(ipv4->sin_addr), buffer, sizeof(buffer));
-                result.emplace_back(buffer);
-            }
-
-            return result;
+            return(httpAddr(view, 0/*default port*/));
         }
-
-        IP GetIPv4(const std::string& host)
-        {
-            in_addr addr;
-            int res = inet_pton(AF_INET, host.c_str(), &addr);
-            if (res == 0)
-            {
-                throw std::invalid_argument("Invalid IPv4 network address");
-            }
-            else if (res < 0)
-            {
-                throw std::invalid_argument(strerror(errno));
-            }
-            else
-            {
-                struct sockaddr_in s_addr = { 0 };
-                s_addr.sin_family         = AF_INET;
-
-                static_assert(sizeof(s_addr.sin_addr.s_addr) >= sizeof(uint32_t),
-                              "Incompatible s_addr.sin_addr.s_addr size");
-                memcpy(&(s_addr.sin_addr.s_addr), &addr.s_addr, sizeof(uint32_t));
-
-                return IP(reinterpret_cast<struct sockaddr*>(&s_addr));
-            }
-        }
-
-        IP GetIPv6(const std::string& host)
-        {
-            in6_addr addr6;
-            int res = inet_pton(AF_INET6, host.c_str(), &(addr6.s6_addr16));
-            if (res == 0)
-            {
-                throw std::invalid_argument("Invalid IPv6 network address");
-            }
-            else if (res < 0)
-            {
-                throw std::invalid_argument(strerror(errno));
-            }
-            else
-            {
-                struct sockaddr_in6 s_addr = { 0 };
-                s_addr.sin6_family         = AF_INET6;
-
-                static_assert(sizeof(s_addr.sin6_addr.s6_addr16) >= 8 * sizeof(uint16_t),
-                              "Incompatible s_addr.sin6_addr.s6_addr16 size");
-                memcpy(&(s_addr.sin6_addr.s6_addr16), &addr6.s6_addr16,
-                       8 * sizeof(uint16_t));
-
-                return IP(reinterpret_cast<struct sockaddr*>(&s_addr));
-            }
-        }
-    } // namespace
-
+    } // namespace helpers
+    
     Port::Port(uint16_t port)
         : port(port)
     { }
@@ -154,63 +65,77 @@ namespace Pistache
 
     IP::IP()
     {
-        family                            = AF_INET;
-        addr                              = { 0 };
-        addr.sin_family                   = AF_INET;
-        uint8_t buff[INET_ADDRSTRLEN + 1] = { 0, 0, 0, 0 };
-        memcpy(&addr.sin_addr.s_addr, buff, INET_ADDRSTRLEN);
+        addr_.ss_family = AF_INET6;
     }
 
     IP::IP(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
     {
-        family                            = AF_INET;
-        addr                              = { 0 };
-        addr.sin_family                   = AF_INET;
-        uint8_t buff[INET_ADDRSTRLEN + 1] = { a, b, c, d };
-        memcpy(&addr.sin_addr.s_addr, buff, INET_ADDRSTRLEN);
+        addr_.ss_family      = AF_INET;
+        const uint8_t buff[] = { a, b, c, d };
+        in_addr_t* in_addr   = &reinterpret_cast<struct sockaddr_in*>(&addr_)->sin_addr.s_addr;
+
+        static_assert(sizeof(buff) == sizeof(*in_addr));
+        memcpy(in_addr, buff, sizeof(*in_addr));
     }
 
     IP::IP(uint16_t a, uint16_t b, uint16_t c, uint16_t d, uint16_t e, uint16_t f,
            uint16_t g, uint16_t h)
     {
-        family            = AF_INET6;
-        addr6             = { 0 };
-        addr6.sin6_family = AF_INET6;
-        uint16_t buff[9] { a, b, c, d, e, f, g, h, '\0' };
-        uint16_t remap[9] = { 0, 0, 0, 0, 0, 0, 0, 0, '\0' };
+        addr_.ss_family        = AF_INET6;
+        const uint16_t buff[8] = { a, b, c, d, e, f, g, h };
+        uint16_t remap[8]      = { 0, 0, 0, 0, 0, 0, 0, 0 };
         if (htonl(1) != 1)
         {
             for (int i = 0; i < 8; i++)
             {
-                uint16_t x = buff[i];
-                uint16_t y = htons(x);
-                remap[i]   = y;
+                const uint16_t swapped = htons(buff[i]);
+                remap[i]               = swapped;
             }
         }
         else
         {
-            memcpy(&remap, &buff, sizeof(remap));
+            memcpy(remap, buff, sizeof(remap));
         }
-        memcpy(&addr6.sin6_addr.s6_addr16, &remap, 8 * sizeof(uint16_t));
+        auto& in6_addr = reinterpret_cast<struct sockaddr_in6*>(&addr_)->sin6_addr.s6_addr;
+
+        static_assert(sizeof(in6_addr) == sizeof(remap));
+        memcpy(in6_addr, remap, sizeof(in6_addr));
     }
 
-    IP::IP(struct sockaddr* _addr)
+    IP::IP(const struct sockaddr* addr)
     {
-        if (_addr->sa_family == AF_INET)
+        if (addr->sa_family == AF_INET)
         {
-            struct sockaddr_in* in_addr = reinterpret_cast<struct sockaddr_in*>(_addr);
-            family                      = AF_INET;
-            port                        = in_addr->sin_port;
-            memcpy(&(addr.sin_addr.s_addr), &(in_addr->sin_addr.s_addr),
-                   sizeof(in_addr_t));
+            const struct sockaddr_in* in_addr = reinterpret_cast<const struct sockaddr_in*>(addr);
+            struct sockaddr_in* ss_in_addr    = reinterpret_cast<struct sockaddr_in*>(&addr_);
+
+            /* Should this simply be `*ss_in_addr = *in_addr`? */
+            ss_in_addr->sin_family      = in_addr->sin_family;
+            ss_in_addr->sin_addr.s_addr = in_addr->sin_addr.s_addr;
+            ss_in_addr->sin_port        = in_addr->sin_port;
         }
-        else if (_addr->sa_family == AF_INET6)
+        else if (addr->sa_family == AF_INET6)
         {
-            struct sockaddr_in6* in_addr = reinterpret_cast<struct sockaddr_in6*>(_addr);
-            family                       = AF_INET6;
-            port                         = in_addr->sin6_port;
-            memcpy(&(addr6.sin6_addr.s6_addr16), &(in_addr->sin6_addr.s6_addr16),
-                   8 * sizeof(uint16_t));
+            const struct sockaddr_in6* in_addr = reinterpret_cast<const struct sockaddr_in6*>(addr);
+            struct sockaddr_in6* ss_in_addr    = reinterpret_cast<struct sockaddr_in6*>(&addr_);
+
+            /* Should this simply be `*ss_in_addr = *in_addr`? */
+            ss_in_addr->sin6_family   = in_addr->sin6_family;
+            ss_in_addr->sin6_port     = in_addr->sin6_port;
+            ss_in_addr->sin6_flowinfo = in_addr->sin6_flowinfo; /* Should be 0 per RFC 3493 */
+            memcpy(ss_in_addr->sin6_addr.s6_addr, in_addr->sin6_addr.s6_addr, sizeof(ss_in_addr->sin6_addr.s6_addr));
+        }
+        else if (addr->sa_family == AF_UNIX)
+        {
+            const struct sockaddr_un* un_addr = reinterpret_cast<const struct sockaddr_un*>(addr);
+            struct sockaddr_un* ss_un_addr    = reinterpret_cast<struct sockaddr_un*>(&addr_);
+
+            ss_un_addr->sun_family = un_addr->sun_family;
+            memcpy(ss_un_addr->sun_path, un_addr->sun_path, sizeof(ss_un_addr->sun_path));
+        }
+        else
+        {
+            throw std::invalid_argument("Invalid socket family");
         }
     }
 
@@ -242,36 +167,77 @@ namespace Pistache
         }
     }
 
-    int IP::getFamily() const { return family; }
+    int IP::getFamily() const { return addr_.ss_family; }
 
-    int IP::getPort() const { return port; }
+    uint16_t IP::getPort() const
+    {
+        if (addr_.ss_family == AF_INET)
+        {
+            return ntohs(reinterpret_cast<const struct sockaddr_in*>(&addr_)->sin_port);
+        }
+        else if (addr_.ss_family == AF_INET6)
+        {
+            return ntohs(reinterpret_cast<const struct sockaddr_in6*>(&addr_)->sin6_port);
+        }
+        else if (addr_.ss_family == AF_UNIX)
+        {
+            // Ports are a meaningless concept for unix domain sockets.  Return
+            // an arbitrary value.
+            return 0;
+        }
+        else
+        {
+            unreachable();
+        }
+    }
 
     std::string IP::toString() const
     {
-        char buff[INET6_ADDRSTRLEN + 1];
-        if (family == AF_INET)
+        if (addr_.ss_family == AF_UNIX)
         {
-            in_addr_t addr_;
-            toNetwork(&addr_);
-            inet_ntop(AF_INET, &addr_, buff, INET_ADDRSTRLEN);
+            auto& unAddr = reinterpret_cast<const struct sockaddr_un&>(addr_);
+            if (unAddr.sun_path[0] == '\0')
+            {
+                // The socket is abstract (not present in the file system name
+                // space).  Its name starts with the byte following the initial
+                // NUL.  As the name may contain embedded NUL bytes and its
+                // length is not available here, simply note that it's an
+                // abstract address.
+                return std::string("[Abstract]");
+            }
+            else
+            {
+                return std::string(unAddr.sun_path);
+            }
         }
-        else if (family == AF_INET6)
+
+        char buff[INET6_ADDRSTRLEN];
+        const auto* addr_sa = reinterpret_cast<const struct sockaddr*>(&addr_);
+        int err             = getnameinfo(
+                        addr_sa, sizeof(addr_), buff, sizeof(buff), NULL, 0, NI_NUMERICHOST);
+        if (err) /* [[unlikely]] */
         {
-            struct in6_addr addr_ = in6addr_any;
-            toNetwork(&addr_);
-            inet_ntop(AF_INET6, &addr_, buff, INET6_ADDRSTRLEN);
+            throw std::runtime_error(gai_strerror(err));
         }
         return std::string(buff);
     }
 
-    void IP::toNetwork(in_addr_t* _addr) const
+    void IP::toNetwork(in_addr_t* out) const
     {
-        memcpy(_addr, &addr.sin_addr.s_addr, sizeof(uint32_t));
+        if (addr_.ss_family != AF_INET)
+        {
+            throw std::invalid_argument("Inapplicable or invalid address family");
+        }
+        *out = reinterpret_cast<const struct sockaddr_in*>(&addr_)->sin_addr.s_addr;
     }
 
     void IP::toNetwork(struct in6_addr* out) const
     {
-        memcpy(&out->s6_addr16, &(addr6.sin6_addr.s6_addr16), 8 * sizeof(uint16_t));
+        if (addr_.ss_family != AF_INET)
+        {
+            throw std::invalid_argument("Inapplicable or invalid address family");
+        }
+        *out = reinterpret_cast<const struct sockaddr_in6*>(&addr_)->sin6_addr;
     }
 
     bool IP::supported()
@@ -307,6 +273,18 @@ namespace Pistache
 
     AddressParser::AddressParser(const std::string& data)
     {
+        /* If the passed value is a simple IPv6 address as defined by RFC 2373
+         * (i.e without port nor '[' and ']'), no custom parsing is required. */
+        struct in6_addr tmp;
+        if (inet_pton(AF_INET6, data.c_str(), &tmp) == 1)
+        {
+            char normalized_addr[INET6_ADDRSTRLEN];
+            inet_ntop(AF_INET6, &tmp, normalized_addr, sizeof(normalized_addr));
+            host_   = normalized_addr;
+            family_ = AF_INET6;
+            return;
+        }
+
         std::size_t end_pos   = data.find(']');
         std::size_t start_pos = data.find('[');
         if (start_pos != std::string::npos && end_pos != std::string::npos && start_pos < end_pos)
@@ -316,7 +294,10 @@ namespace Pistache
             {
                 hasColon_ = true;
             }
-            host_   = data.substr(start_pos, end_pos + 1);
+            // Strip '[' and ']' in IPv6 addresses, as it is not part of the
+            // address itself according to RFC 4291 and RFC 5952, but just a way
+            // to represent address + port in an unambiguous way.
+            host_   = data.substr(start_pos + 1, end_pos - 1);
             family_ = AF_INET6;
             ++end_pos;
         }
@@ -336,7 +317,18 @@ namespace Pistache
         {
             port_ = data.substr(end_pos + 1);
             if (port_.empty())
+            {
+                PS_LOG_DEBUG_ARGS("port_ empty, data (addr string) %s, "
+                                  "throwing \"Invalid port\"",
+                                  data.c_str());
+
                 throw std::invalid_argument("Invalid port");
+            }
+
+            // Check if port_ is a valid number
+            char* tmp;
+            std::strtol(port_.c_str(), &tmp, 10);
+            hasNumericPort_ = *tmp == '\0';
         }
     }
 
@@ -346,11 +338,14 @@ namespace Pistache
 
     bool AddressParser::hasColon() const { return hasColon_; }
 
+    bool AddressParser::hasNumericPort() const { return hasNumericPort_; }
+
     int AddressParser::family() const { return family_; }
 
     Address::Address()
         : ip_ {}
         , port_ { 0 }
+        , addrLen_(sizeof(struct sockaddr_in6))
     { }
 
     Address::Address(std::string host, Port port)
@@ -358,33 +353,45 @@ namespace Pistache
         std::string addr = std::move(host);
         addr.append(":");
         addr.append(port.toString());
-        init(std::move(addr));
+        init(std::move(addr), 0 /* no default port, set explicitly */);
     }
 
-    Address::Address(std::string addr) { init(std::move(addr)); }
+    Address::Address(std::string addr)
+    {
+        init(std::move(addr), 0 /* default port*/);
+    }
 
-    Address::Address(const char* addr) { init(std::string(addr)); }
+    Address::Address(const char* addr)
+    {
+        init(std::string(addr), 0 /* default port*/);
+    }
+
+    Address Address::makeWithDefaultPort(std::string addr,
+                                         Port default_port /* defaults to zero*/)
+    { // static
+        Address res;
+        res.init(std::move(addr), default_port);
+
+        return (res);
+    }
 
     Address::Address(IP ip, Port port)
         : ip_(ip)
         , port_(port)
-    { }
+    {
+        addrLen_ = ip.getFamily() == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+    }
 
     Address Address::fromUnix(struct sockaddr* addr)
     {
-        if ((addr->sa_family == AF_INET) or (addr->sa_family == AF_INET6))
+        const auto family = addr->sa_family;
+        if (family == AF_INET || family == AF_INET6 || family == AF_UNIX)
         {
             IP ip     = IP(addr);
-            Port port = Port(static_cast<uint16_t>(ip.getPort()));
-            assert(addr);
+            Port port = Port(ip.getPort());
             return Address(ip, port);
         }
-        throw Error("Not an IP socket");
-    }
-
-    Address Address::fromUnix(struct sockaddr_in* addr)
-    {
-        return Address::fromUnix(reinterpret_cast<struct sockaddr*>(addr));
+        throw Error("Not an IP or unix domain socket");
     }
 
     std::string Address::host() const { return ip_.toString(); }
@@ -395,73 +402,121 @@ namespace Pistache
 
     void Address::init(const std::string& addr)
     {
-        AddressParser parser(addr);
-        const int family = parser.family();
-
-        // TODO: Need refactoring
-        const std::string& portPart = parser.rawPort();
-        if (portPart.empty())
+        init(addr, 0 /*default port*/);
+    }
+    
+    void Address::init(const std::string& addr, Port default_port)
+    {
+        // Handle unix domain addresses separately.
+        if (isUnixDomain(addr))
         {
-            if (parser.hasColon())
+            struct sockaddr_un unAddr = {};
+            unAddr.sun_family         = AF_UNIX;
+
+            // See unix(7) manual page; distinguish among unnamed, abstract,
+            // and pathname socket addresses.
+            const auto size = std::min(addr.size(), sizeof unAddr.sun_path);
+            if (size == 0)
             {
-                // "www.example.com:" or "127.0.0.1:" cases
-                throw std::invalid_argument("Invalid port");
+                addrLen_ = sizeof unAddr.sun_family;
+            }
+            else if (addr[0] == '\0')
+            {
+                addrLen_ = static_cast<socklen_t>(
+                    sizeof unAddr.sun_family + size);
+                std::memcpy(unAddr.sun_path, addr.data(), size);
             }
             else
             {
-                // "www.example.com" or "127.0.0.1" cases
-                port_ = Const::HTTP_STANDARD_PORT;
-            }
-        }
-        else
-        {
-            char* end = nullptr;
-            long port = strtol(portPart.c_str(), &end, 10);
-            if (*end != 0 || port < Port::min() || port > Port::max())
-                throw std::invalid_argument("Invalid port");
-            port_ = Port(static_cast<uint16_t>(port));
-        }
-
-        if (family == AF_INET6)
-        {
-            const std::string& raw_host = parser.rawHost();
-            assert(raw_host.size() > 2);
-            const std::string& host = addr.substr(1, raw_host.size() - 2);
-
-            ip_ = GetIPv6(host);
-        }
-        else if (family == AF_INET)
-        {
-            std::string host = parser.rawHost();
-
-            if (host == "*")
-            {
-                host = "0.0.0.0";
-            }
-            else if (host == "localhost")
-            {
-                host = "127.0.0.1";
+                addrLen_ = static_cast<socklen_t>(
+                    offsetof(struct sockaddr_un, sun_path) + size);
+                std::strncpy(unAddr.sun_path, addr.c_str(), size);
+                if (size == sizeof unAddr.sun_path)
+                {
+                    unAddr.sun_path[size - 1] = '\0';
+                }
             }
 
-            const auto& addresses = HostToIPv4(host, portPart);
-            if (!addresses.empty())
-            {
-                ip_ = GetIPv4(addresses[0]);
-            }
-            else
-            {
-                assert(false && "No IP addresses found for host");
-            }
+            ip_   = IP(reinterpret_cast<struct sockaddr*>(&unAddr));
+            port_ = Port(ip_.getPort());
+            return;
         }
-        else
+
+        if (!default_port)
+            default_port = 80;
+        std::string default_port_str(std::to_string(default_port));
+
+        addrLen_ = family() == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+
+        const AddressParser parser(addr);
+        const std::string& host = parser.rawHost();
+        const std::string& port = parser.rawPort();
+
+        const bool wildcard = host == "*";
+
+        struct addrinfo hints = {};
+        hints.ai_family       = AF_UNSPEC;
+        hints.ai_socktype     = SOCK_STREAM;
+        hints.ai_protocol     = IPPROTO_TCP;
+
+        if (wildcard)
         {
-            assert(false);
+            hints.ai_flags = AI_PASSIVE;
         }
+
+        // The host is set to nullptr if empty because getaddrinfo() requires
+        // it, and also when it is set to "*" because, when combined with the
+        // AI_PASSIVE flag, it yields the proper wildcard address. The port, if
+        // empty, is set to 80 (http) by default.
+        const char* const addrinfo_host = host.empty() || wildcard ? nullptr : host.c_str();
+        const char* const addrinfo_port = port.empty() ? default_port_str.c_str() : port.c_str();
+
+        AddrInfo addrinfo;
+        const int err = addrinfo.invoke(addrinfo_host, addrinfo_port, &hints);
+        if (err)
+        {
+            throw std::invalid_argument(gai_strerror(err));
+        }
+
+        const struct addrinfo* result = addrinfo.get_info_ptr();
+
+        ip_   = IP(result->ai_addr);
+        port_ = Port(ip_.getPort());
+
+        // Check that the port has not overflowed while calling getaddrinfo()
+        if (parser.hasNumericPort() && port_ != std::strtol(addrinfo_port, nullptr, 10))
+        {
+            throw std::invalid_argument("Invalid numeric port");
+        }
+    }
+
+    // Applies heuristics to deterimine whether or not addr names a unix
+    // domain address.  If it is zero-length, begins with a NUL byte, or
+    // contains a '/' character (none of which are possible for legitimate
+    // IP-based addresses), it's deemed to be a unix domain address.
+    //
+    // This heuristic rejects pathname unix domain addresses that contain no
+    // '/' characters; such addresses tend not to occur in practice.  See the
+    // unix(7) manual page for more infomation.
+    bool Address::isUnixDomain(const std::string& addr)
+    {
+        return addr.size() == 0 || addr[0] == '\0' || addr.find('/') != std::string::npos;
     }
 
     std::ostream& operator<<(std::ostream& os, const Address& address)
     {
-        os << address.host() << ":" << address.port();
+        /* As recommended by section 6 of RFC 5952,
+         * Notes on Combining IPv6 Addresses with Port Numbers */
+        if (address.family() == AF_INET6)
+        {
+            os << '[';
+        }
+        os << address.host();
+        if (address.family() == AF_INET6)
+        {
+            os << ']';
+        }
+        os << ":" << address.port();
         return os;
     }
 

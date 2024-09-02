@@ -19,6 +19,7 @@
 
 #include <pistache/async.h>
 #include <pistache/peer.h>
+#include <pistache/pist_quote.h>
 #include <pistache/transport.h>
 
 namespace Pistache::Tcp
@@ -27,7 +28,6 @@ namespace Pistache::Tcp
     {
         struct ConcretePeer : Peer
         {
-            ConcretePeer() = default;
             [[maybe_unused]] ConcretePeer(Fd fd, const Address& addr, void* ssl)
                 : Peer(fd, addr, ssl)
             { }
@@ -39,10 +39,18 @@ namespace Pistache::Tcp
         , addr(addr)
         , ssl_(ssl)
         , id_(getUniqueId())
-    { }
+    {
+        PS_LOG_DEBUG_ARGS("peer %p, fd %" PIST_QUOTE(PS_FD_PRNTFCD) ", Address ptr %p, ssl %p",
+                          this, fd, &addr, ssl);
+    }
 
     Peer::~Peer()
     {
+        PS_LOG_DEBUG_ARGS("peer %p, fd %" PIST_QUOTE(PS_FD_PRNTFCD) ", Address ptr %p, ssl %p",
+                          this, fd_, &addr, ssl_);
+
+        closeFd(); // does nothing if already closed
+
 #ifdef PISTACHE_USE_SSL
         if (ssl_)
             SSL_free(static_cast<SSL*>(ssl_));
@@ -61,26 +69,41 @@ namespace Pistache::Tcp
 
     const Address& Peer::address() const { return addr; }
 
+    void Peer::setIdle(bool bIdle) { isIdle_ = bIdle; }
+    bool Peer::isIdle() const { return isIdle_; }
+
     const std::string& Peer::hostname()
     {
         if (hostname_.empty())
         {
-            char host[NI_MAXHOST];
-            struct sockaddr_in sa;
-            sa.sin_family = AF_INET;
-            if (inet_pton(AF_INET, addr.host().c_str(), &sa.sin_addr) == 0)
+            if (addr.family() == AF_UNIX)
             {
-                hostname_ = addr.host();
+                //
+                // Communication through unix domain sockets is constrained to
+                // the local host.
+                //
+                hostname_.assign("localhost");
             }
             else
             {
-                if (!getnameinfo(reinterpret_cast<struct sockaddr*>(&sa), sizeof(sa), host, sizeof(host),
-                                 nullptr, 0 // Service info
-                                 ,
-                                 NI_NAMEREQD // Raise an error if name resolution failed
-                                 ))
+                char host[NI_MAXHOST];
+                struct sockaddr_in sa;
+                sa.sin_family = AF_INET;
+                if (inet_pton(AF_INET, addr.host().c_str(), &sa.sin_addr) == 0)
                 {
-                    hostname_.assign(static_cast<char*>(host));
+                    hostname_ = addr.host();
+                }
+                else
+                {
+                    if (!getnameinfo(
+                            reinterpret_cast<struct sockaddr*>(&sa),
+                            sizeof(sa), host, sizeof(host),
+                            nullptr, 0, // Service info
+                            NI_NAMEREQD // Raise an error if name resolution failed
+                            ))
+                    {
+                        hostname_.assign(static_cast<char*>(host));
+                    }
                 }
             }
         }
@@ -90,14 +113,55 @@ namespace Pistache::Tcp
     void* Peer::ssl() const { return ssl_; }
     size_t Peer::getID() const { return id_; }
 
-    int Peer::fd() const
+    Fd Peer::fd() const
     {
-        if (fd_ == -1)
+        Fd res_fd(fd_);
+
+        if (res_fd == PS_FD_EMPTY)
         {
-            throw std::runtime_error("The peer has no associated fd");
+            PS_LOG_DEBUG_ARGS("peer %p has no associated fd", this);
+            return (PS_FD_EMPTY);
         }
 
-        return fd_;
+        return res_fd;
+    }
+
+    int Peer::actualFd() const // can return -1
+    {
+        Fd this_fd(fd_);
+
+        if (this_fd == PS_FD_EMPTY)
+        {
+            PS_LOG_DEBUG_ARGS("peer %p has no associated fd", this);
+            return (-1);
+        }
+
+        return (GET_ACTUAL_FD(this_fd));
+    }
+
+    void Peer::closeFd()
+    {
+
+        PS_LOG_DEBUG_ARGS("peer %p, fd %" PIST_QUOTE(PS_FD_PRNTFCD),
+                          this, fd_);
+
+        auto this_fd = fd_;
+
+        if (this_fd != PS_FD_EMPTY)
+        {
+            fd_ = PS_FD_EMPTY;
+
+            if (transport_)
+            {
+                // Getting transport to do the close allows transport to clean
+                // up any transport usage of the Fd, e.g. in the write queue
+                transport_->closeFd(this_fd);
+            }
+            else
+            {
+                CLOSE_FD(this_fd);
+            }
+        }
     }
 
     void Peer::putData(std::string name, std::shared_ptr<void> data)

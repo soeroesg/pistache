@@ -16,6 +16,7 @@
 #include <ostream>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <pistache/http_defs.h>
@@ -64,13 +65,21 @@ namespace Pistache::Http::Header
     // 3.5 Content Codings
     // 3.6 Transfer Codings
     enum class Encoding { Gzip,
+                          Br,
                           Compress,
                           Deflate,
                           Identity,
                           Chunked,
                           Unknown };
 
+    /* Returns a textual representation of a given encoding */
     const char* encodingString(Encoding encoding);
+
+    /* Returns the encoding corresponding to the given string */
+    Encoding encodingFromString(std::string_view str);
+
+    /* Returns true if the given encoding is supported by Pistache */
+    bool encodingSupported(Encoding encoding);
 
     class Header
     {
@@ -163,6 +172,14 @@ namespace Pistache::Http::Header
 
         Accept()
             : mediaRange_()
+        { }
+
+        explicit Accept(const std::vector<Mime::MediaType>& mediaRange)
+            : mediaRange_(mediaRange)
+        { }
+
+        explicit Accept(std::initializer_list<Mime::MediaType> mediaRange)
+            : mediaRange_(mediaRange)
         { }
 
         void parseRaw(const char* str, size_t len) override;
@@ -358,6 +375,30 @@ namespace Pistache::Http::Header
         Encoding encoding_;
     };
 
+    class AcceptEncoding : public Header
+    {
+    public:
+        NAME("Accept-Encoding")
+
+        AcceptEncoding() = default;
+        explicit AcceptEncoding(Encoding encoding);
+
+        void parseRaw(const char* str, size_t len) override;
+        void write(std::ostream& os) const override;
+
+        const std::vector<std::pair<Encoding, float>>& encodings() const;
+
+    private:
+        /* Contains the encodings listed in the header, sorted by preference */
+        std::vector<std::pair<Encoding, float>> encodings_;
+
+        /*
+         * Inserts a new element into the encodings_ vector, keeping it sorted
+         * by qvalue
+         */
+        void insertEncoding(const std::pair<Encoding, float>& elem);
+    };
+
     class ContentEncoding : public EncodingHeader
     {
     public:
@@ -537,25 +578,44 @@ namespace Pistache::Http::Header
         NAME("Host");
 
         Host()
-            : host_()
+            : uriHost_()
             , port_(0)
         { }
 
         explicit Host(const std::string& data);
-        explicit Host(const std::string& host, Port port)
-            : host_(host)
-            , port_(port)
+        explicit Host(const std::string& host, Port port);
+
+        void parse(const std::string& data) override;
+        void write(std::ostream& os) const override;
+
+        std::string host() const { return uriHost_; }
+        Port port() const { return port_; }
+
+    private:
+        std::string uriHost_;
+        Port port_;
+    };
+
+    class LastModified : public Header
+    {
+    public:
+        NAME("Last-Modified");
+
+        LastModified()
+            : fullDate_()
+        { }
+
+        explicit LastModified(const FullDate& fullDate)
+            : fullDate_(fullDate)
         { }
 
         void parse(const std::string& data) override;
         void write(std::ostream& os) const override;
 
-        std::string host() const { return host_; }
-        Port port() const { return port_; }
+        FullDate fullDate() const { return fullDate_; }
 
     private:
-        std::string host_;
-        Port port_;
+        FullDate fullDate_;
     };
 
     class Location : public Header
@@ -628,19 +688,19 @@ namespace Pistache::Http::Header
         std::string ua_;
     };
 
-#define CUSTOM_HEADER(header_name)                                                  \
-    class header_name : public Pistache::Http::Header::Header                       \
+#define PISTACHE_CUSTOM_HEADER(header_class, header_name)                           \
+    class header_class : public Pistache::Http::Header::Header                      \
     {                                                                               \
     public:                                                                         \
-        NAME(#header_name)                                                          \
+        NAME(header_name)                                                           \
                                                                                     \
-        header_name() = default;                                                    \
+        header_class() = default;                                                   \
                                                                                     \
-        explicit header_name(const char* value)                                     \
+        explicit header_class(const char* value)                                    \
             : value_ { value }                                                      \
         { }                                                                         \
                                                                                     \
-        explicit header_name(std::string value)                                     \
+        explicit header_class(std::string value)                                    \
             : value_(std::move(value))                                              \
         { }                                                                         \
                                                                                     \
@@ -654,6 +714,8 @@ namespace Pistache::Http::Header
         std::string value_;                                                         \
     };
 
+#define CUSTOM_HEADER(header_name) PISTACHE_CUSTOM_HEADER(header_name, #header_name)
+
     class Raw
     {
     public:
@@ -663,10 +725,10 @@ namespace Pistache::Http::Header
             , value_(std::move(value))
         { }
 
-        Raw(const Raw& other) = default;
+        Raw(const Raw& other)            = default;
         Raw& operator=(const Raw& other) = default;
 
-        Raw(Raw&& other) = default;
+        Raw(Raw&& other)            = default;
         Raw& operator=(Raw&& other) = default;
 
         std::string name() const { return name_; }

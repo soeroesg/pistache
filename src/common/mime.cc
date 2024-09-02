@@ -25,14 +25,12 @@ namespace Pistache::Http::Mime
         else if (val_ == 100)
             return "q=1";
 
-        char buff[sizeof("q=0.99")];
-        memset(buff, 0, sizeof buff);
-        if (val_ % 10 == 0)
-            snprintf(buff, sizeof buff, "q=%.1f", val_ / 100.0);
-        else
-            snprintf(buff, sizeof buff, "q=%.2f", val_ / 100.0);
+        char buff[sizeof("q=0.99")] = {};
+        const char* const format    = val_ % 10 == 0 ? "q=%.1f" : "q=%.2f";
 
-        return std::string(buff);
+        const int len = snprintf(buff, sizeof(buff), format, val_ / 100.0);
+
+        return std::string(buff, len);
     }
 
     MediaType MediaType::fromString(const std::string& str)
@@ -105,7 +103,7 @@ namespace Pistache::Http::Mime
 
     void MediaType::parseRaw(const char* str, size_t len)
     {
-        auto raise = [&](const char* str) {
+        auto raise = [](const char* str) {
             // TODO: eventually, we should throw a more generic exception
             // that could then be catched in lower stack frames to rethrow
             // an HttpError
@@ -239,9 +237,14 @@ namespace Pistache::Http::Mime
 
                 if (match_literal('=', cursor))
                 {
-                    double val;
-                    if (!match_double(&val, cursor))
+                    float val;
+                    std::size_t qvalue_len;
+
+                    if (!Header::strToQvalue(cursor.offset(), &val, &qvalue_len))
+                    {
                         raise("Invalid quality factor");
+                    }
+                    cursor.advance(qvalue_len);
                     q_ = Q::fromFloat(val);
                 }
                 else

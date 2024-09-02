@@ -34,12 +34,9 @@ namespace Pistache
     public:
         bool connect(const Pistache::Address& address)
         {
-            struct addrinfo hints;
-            std::memset(&hints, 0, sizeof(hints));
-            hints.ai_family   = address.family();
-            hints.ai_socktype = SOCK_STREAM;
-            hints.ai_flags    = 0;
-            hints.ai_protocol = 0;
+            struct addrinfo hints = {};
+            hints.ai_family       = address.family();
+            hints.ai_socktype     = SOCK_STREAM;
 
             auto host = address.host();
             auto port = address.port().toString();
@@ -54,6 +51,8 @@ namespace Pistache
             for (; addr; addr = addr->ai_next)
             {
                 sfd = ::socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+                PS_LOG_DEBUG_ARGS("::socket actual_fd %d", sfd);
+
                 if (sfd < 0)
                     continue;
 

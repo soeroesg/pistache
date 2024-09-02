@@ -5,7 +5,7 @@
 project(
 	'pistache',
 	'cpp',
-	version: '0.0.3', # In Meson 0.57 this can be replaced with files('version.txt')
+        version: '0.3.0', # In Meson 0.57 this can be replaced with files('version.txt')
 	license: 'Apache-2.0',
 	default_options: [
 		'cpp_std=c++17',
@@ -14,11 +14,15 @@ project(
 		'b_lto=false',
 		'warning_level=3'
 	],
-	meson_version: '>=0.50.0'
+	meson_version: '>=0.53.2'
 )
 
-if host_machine.system() != 'linux'
-	error('Pistache currenly only supports Linux. See https://github.com/pistacheio/pistache/issues/6#issuecomment-242398225 for more information')
+fs = import('fs')
+
+#macOS host_machine.system() is 'darwin'
+
+if host_machine.system() != 'linux' and host_machine.system() != 'darwin' and not host_machine.system().endswith('bsd')
+	error('Pistache currenly only supports Linux, macOS and Free/Open/NetBSD. See https://github.com/pistacheio/pistache/issues/6#issuecomment-242398225 for more information')
 endif
 
 compiler = meson.get_compiler('cpp')
@@ -32,15 +36,49 @@ if get_option('b_coverage')
 	add_project_arguments(compiler.get_supported_arguments(['-fstack-protector-all', '--param=ssp-buffer-size=4']), language: 'cpp')
 endif
 
+# howardhinnant/date has several names - look for them, from the most
+# to the least explicit name.
+# In Meson 0.60.0, this can be replaced with a simpler:
+#
+#     dependency('howardhinnant-date', 'hinnant-date', 'date')
+#
 date_dep = dependency('howardhinnant-date', required: false)
 if not date_dep.found()
-	date_dep = dependency('hinnant-date', fallback: ['hinnant-date', 'date_dep'])
+	date_dep = dependency('hinnant-date', required: false)
 endif
+if not date_dep.found()
+	date_dep = dependency('date', fallback: ['hinnant-date', 'date_dep'])
+endif
+
 deps_libpistache = [
 	dependency('threads'),
-	dependency('RapidJSON', fallback: ['rapidjson', 'rapidjson_dep']),
 	date_dep
 ]
+public_deps = []
+
+if get_option('PISTACHE_USE_RAPIDJSON')
+	rapidjson_dep = dependency('RapidJSON', fallback: ['rapidjson', 'rapidjson_dep'])
+	deps_libpistache += rapidjson_dep
+	public_deps += rapidjson_dep
+endif
+
+# Support Brotli compressed Content-Encoding responses...
+if get_option('PISTACHE_USE_CONTENT_ENCODING_BROTLI')
+
+	# Need Brotli encoder for library...
+	brotli_dep = dependency('libbrotlienc')
+	deps_libpistache += brotli_dep
+	public_deps += brotli_dep
+endif
+
+# Support deflate compressed Content-Encoding responses...
+if get_option('PISTACHE_USE_CONTENT_ENCODING_DEFLATE')
+
+	# Need zlib...
+	zlib_dep = dependency('zlib')
+	deps_libpistache += zlib_dep
+	public_deps += zlib_dep
+endif
 
 # Check if -latomic is needed - https://github.com/llvm/llvm-project/blob/main/llvm/cmake/modules/CheckAtomic.cmake
 compiler_id = compiler.get_id()
@@ -82,13 +120,37 @@ if (compiler_id == 'clang' or compiler_id == 'gcc') and not has_working_cxx_atom
 	deps_libpistache += libatomic_dep
 endif
 
+# Workaround https://github.com/pistacheio/pistache/issues/1068
+if compiler_id == 'gcc' and compiler.version().version_compare('<9.1') or compiler_id == 'clang'
+	cpp_fs_dep = compiler.find_library('stdc++fs', required: false)
+	if not cpp_fs_dep.found()
+		cpp_fs_dep = compiler.find_library('c++fs', required: false)
+	endif
+	if cpp_fs_dep.found()
+		deps_libpistache += cpp_fs_dep
+	endif
+endif
+
 if get_option('PISTACHE_USE_SSL')
-	deps_libpistache += dependency('openssl')
+	openssl_dep = dependency('openssl')
+	deps_libpistache += openssl_dep
+	public_deps += openssl_dep
+endif
+
+if host_machine.system() == 'darwin' or host_machine.system().endswith('bsd') or get_option('PISTACHE_FORCE_LIBEVENT')
+	deps_libpistache += dependency('libevent')
+        deps_libpistache += dependency('libevent_pthreads')
+endif
+
+if host_machine.system().endswith('bsd')
+        # libexecinfo is included for the 'backtrace' function
+        libexecinfo_dep = compiler.find_library('execinfo')
+        deps_libpistache += libexecinfo_dep
 endif
 
 version_array = []
 if meson.version().version_compare('>=0.57.0')
-	version_array = import('fs').read('version.txt').strip().split('.')
+	version_array = fs.read('version.txt').strip().split('.')
 else
 	# Ugly workaround for reading a file
 	version_array = run_command(
@@ -113,6 +175,10 @@ incl_pistache = include_directories('include')
 
 subdir('include'/'pistache')
 subdir('src')
+if get_option('PISTACHE_BUILD_TESTS') and not get_option('PISTACHE_USE_RAPIDJSON')
+    error('Pistache tests require rapidjson support')
+endif
+
 if get_option('PISTACHE_BUILD_TESTS')
 	subdir('tests')
 endif
@@ -125,7 +191,7 @@ endif
 
 if not meson.is_subproject()
 	git = find_program('git', required: false)
-	if git.found()
+	if git.found() and fs.is_dir(meson.source_root()/'.git')
 		run_command(git, 'config', '--local', 'core.hooksPath', meson.source_root()/'.hooks', check: false)
 	endif
 endif

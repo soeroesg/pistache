@@ -8,16 +8,26 @@ SPDX-License-Identifier: Apache-2.0
 
 [![N|Solid](pistache.io/static/img/logo.png)](https://www.github.com/pistacheio/pistache)
 
+[![linux](https://github.com/pistacheio/pistache/actions/workflows/linux.yaml/badge.svg)](https://github.com/pistacheio/pistache/actions/workflows/linux.yaml)
 [![autopkgtest](https://github.com/pistacheio/pistache/actions/workflows/autopkgtest.yaml/badge.svg)](https://github.com/pistacheio/pistache/actions/workflows/autopkgtest.yaml)
+[![codecov](https://codecov.io/gh/pistacheio/pistache/branch/master/graph/badge.svg)](https://codecov.io/gh/pistacheio/pistache)
 [![REUSE status](https://api.reuse.software/badge/github.com/pistacheio/pistache)](https://api.reuse.software/info/github.com/pistacheio/pistache)
 
-Pistache is a modern and elegant HTTP and REST framework for C++. It is entirely written in pure-C++17[*](#linux-only) and provides a clear and pleasant API.
+Pistache is a modern and elegant HTTP and REST framework for C++. It is entirely written in pure-C++17[\*](#linux-only) and provides a clear and pleasant API.
+
+Pistache supports Linux and macOS. To use in macOS, see the file: *Building on macOS.txt*
 
 ## Documentation
 
-We are still looking for a volunteer to document fully the API. In the mean time, partial documentation is available at [pistache.io](http://pistache.io). If you are interested in helping with this, please open an issue ticket.
+We are still looking for a volunteer to document fully the API. In the mean time, partial documentation is available at [pistacheio.github.io/pistache/](https://pistacheio.github.io/pistache/). If you are interested in helping with this, please open an issue ticket.
 
-A comparison of Pistache to other C++ RESTful APIs was created by guteksan and is available [here](https://github.com/guteksan/REST-CPP-benchmark).
+A benchmark comparison of Pistache to other C++ RESTful APIs was created by guteksan and is available [here](https://github.com/guteksan/REST-CPP-benchmark).
+
+## Articles, Tutorials & Videos
+
+* [Building an API in C++ With Pistache](https://levelup.gitconnected.com/building-an-api-in-c-with-pistache-413247535fd3)
+* [Adding a REST API with Pistache](https://www.youtube.com/watch?v=9BCO5W_Kw3Q)
+* [Slim Microservices with Pistache](https://www.dev-insider.de/schlanke-microservices-mit-pistache-a-87155e2f183e637103e19708200f8931/) (German)
 
 ## Dependencies
 
@@ -40,7 +50,7 @@ The [Launchpad Team](https://launchpad.net/~pistache+team) administers the daily
 
 ### Versioning
 
-The version of the library's public interface (ABI) is not the same as the release version, but we choose to always guarantee that the major release version and the soname version will match. The interface version is primarily associated with the _external_ interface of the library. Different platforms handle this differently, such as AIX, GNU/Linux, and Solaris.
+The version of the library's public interface (ABI) is not the same as the release version, but we plan to always guarantee that the major release version and the soname version will match after the 1.0 release; until that, the soname version will follow feature releases. The interface version is primarily associated with the _external_ interface of the library. Different platforms handle this differently, such as AIX, GNU/Linux, and Solaris.
 
 GNU Libtool abstracts each platform's idiosyncrasies away because it is more portable than using `ar(1)` or `ranlib(1)` directly. However, it is [not supported in Meson](https://mesonbuild.com/FAQ.html#how-do-i-do-the-equivalent-of-libtools-exportsymbol-and-exportregex) so we made do without it by setting the SONAME directly.
 
@@ -48,7 +58,7 @@ When Pistache is installed it will normally ship:
 
 - `libpistache.so.X.Y.Z`: This is the actual shared-library binary file. The _X_, _Y_ and _Z_ values are the major, minor and patch interface versions respectively.
 
-- `libpistache.so.X`: This is the _soname_ soft link that points to the binary file. It is what other programs and other libraries reference internally. You should never need to directly reference this file in your build environment.
+- `libpistache.so.X.Y`: This is the _soname_ soft link that points to the binary file. It is what other programs and other libraries reference internally. You should never need to directly reference this file in your build environment.
 
 - `libpistache.so`: This is the _linker name_ entry. This is also a soft link that refers to the soname with the highest major interface version. This linker name is what is referred to on the linker command line.
 
@@ -64,9 +74,7 @@ If you have no need to modify the Pistache source, you are strongly recommended 
 
 ### Debian and Ubuntu
 
-We have submitted a [Request for Packaging](https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=929593) downstream to Debian. Once we have an official Debian package maintainer intimately familiar with the [Debian Policy Manual](https://www.debian.org/doc/debian-policy/), we can expect to eventually see it become available in Debian and all derivatives (e.g. Ubuntu and many others).
-
-But until then currently Pistache has partially compliant upstream Debianization. Our long term goal is to have our source package properly Debianized downstream by a Debian Policy Manual SME. In the mean time consider using our PPAs to avoid having to build from source.
+Pistache is available in the official repositories since Debian 12 and Ubuntu 23.10, under the package name `libpistache-dev`.
 
 #### Supported Architectures
 
@@ -192,16 +200,23 @@ To download the latest available release, clone the repository over GitHub.
 $ git clone https://github.com/pistacheio/pistache.git
 ```
 
+To build for macOS, you can follow the instructions in:
+    *Building on macOS.txt*
+
+Continuing the Linux instructions:
+
 Now, compile the sources:
 
 ```sh
 $ cd pistache
-$ meson setup build \
-    --buildtype=release \
-    -DPISTACHE_USE_SSL=true \
-    -DPISTACHE_BUILD_EXAMPLES=true \
-    -DPISTACHE_BUILD_TESTS=true \
-    -DPISTACHE_BUILD_DOCS=false \
+$ meson setup build                                 \
+    --buildtype=release                             \
+    -DPISTACHE_USE_SSL=true                         \
+    -DPISTACHE_BUILD_EXAMPLES=true                  \
+    -DPISTACHE_BUILD_TESTS=true                     \
+    -DPISTACHE_BUILD_DOCS=false                     \
+    -DPISTACHE_USE_CONTENT_ENCODING_BROTLI=true     \
+    -DPISTACHE_USE_CONTENT_ENCODING_DEFLATE=true    \
     --prefix="$PWD/prefix"
 $ meson compile -C build
 $ meson install -C build
@@ -217,12 +232,14 @@ Be patient, async_test can take some time before completing. And that's it, now 
 
 Some other Meson options:
 
-| Option                        | Default | Description                                    |
-| ----------------------------- | ------- | ---------------------------------------------- |
-| PISTACHE_USE_SSL              | False   | Build server with SSL support                  |
-| PISTACHE_BUILD_TESTS          | False   | Build all of the unit tests                    |
-| PISTACHE_BUILD_EXAMPLES       | False   | Build all of the example apps                  |
-| PISTACHE_BUILD_DOCS           | False   | Build Doxygen docs                             |
+| Option                                | Default | Description                                    |
+| ------------------------------------- | ------- | ---------------------------------------------- |
+| PISTACHE_USE_SSL                      | False   | Build server with SSL support                  |
+| PISTACHE_BUILD_TESTS                  | False   | Build all of the unit tests                    |
+| PISTACHE_BUILD_EXAMPLES               | False   | Build all of the example apps                  |
+| PISTACHE_BUILD_DOCS                   | False   | Build Doxygen docs                             |
+| PISTACHE_USE_CONTENT_ENCODING_BROTLI  | False   | Build with Brotli content encoding support     |
+| PISTACHE_USE_CONTENT_ENCODING_DEFLATE | False   | Build with deflate content encoding support    |
 
 ## Example
 
@@ -244,6 +261,10 @@ int main() {
   Http::listenAndServe<HelloHandler>(Pistache::Address("*:9080"));
 }
 ```
+
+## Tutorials
+
+* [Adding a REST API with Pistache](https://www.youtube.com/watch?v=9BCO5W_Kw3Q), Utah Cpp Programmers, 20 July 2022.
 
 ## Project status
 
