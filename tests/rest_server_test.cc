@@ -13,8 +13,13 @@
 
 #include <httplib.h>
 
+#include <chrono>
+#include <thread>
+
 using namespace std;
 using namespace Pistache;
+
+static constexpr auto KEEPALIVE_TIMEOUT = std::chrono::seconds(2);
 
 class StatsEndpoint
 {
@@ -26,6 +31,7 @@ public:
     void init(size_t thr = 2)
     {
         auto opts = Http::Endpoint::options().threads(static_cast<int>(thr));
+        opts.keepaliveTimeout(KEEPALIVE_TIMEOUT);
         httpEndpoint->init(opts);
         setupRoutes();
     }
@@ -39,6 +45,11 @@ public:
     void shutdown() { httpEndpoint->shutdown(); }
 
     Port getPort() const { return httpEndpoint->getPort(); }
+
+    std::vector<std::shared_ptr<Tcp::Peer>> getAllPeer()
+    {
+        return httpEndpoint->getAllPeer();
+    }
 
 private:
     void setupRoutes()
@@ -99,10 +110,24 @@ TEST(rest_server_test, basic_test)
     {
         ASSERT_EQ(res->body, "ip6-localhost"); // count the passing test.
     }
-    else
+    else if (res->body == "localhost")
     {
         ASSERT_EQ(res->body, "localhost");
     }
+    else
+    {
+        const unsigned int my_max_hostname_len = 1024;
+        
+        // NetBSD showed this case, when hostname was not "localhost"
+        char name[my_max_hostname_len + 6];
+        name[0] = 0;
+
+        int ghn_res = gethostname(&(name[0]), my_max_hostname_len+2);
+        ASSERT_EQ(ghn_res, 0);
+
+        ASSERT_EQ(res->body, &(name[0]));
+    }
+    
     stats.shutdown();
 }
 
@@ -141,6 +166,107 @@ TEST(rest_server_test, response_status_code_test)
     res = client.Post("/read/function1", body, "invalid");
     EXPECT_EQ(res->status, 415);
     EXPECT_EQ(res->body, "Unknown Media Type");
+
+    stats.shutdown();
+}
+
+TEST(rest_server_test, keepalive_server_timeout)
+{
+    int thr = 1;
+    Address addr(Ipv4::loopback(), Port(0));
+    StatsEndpoint stats(addr);
+    stats.init(thr);
+    stats.start();
+    Port port = stats.getPort();
+
+    httplib::Client client("localhost", port);
+    client.set_keep_alive(true);
+    auto peer = stats.getAllPeer();
+
+    // first request
+    auto res = client.Get("/read/hostname");
+    EXPECT_EQ(res->status, 200);
+    peer           = stats.getAllPeer();
+    auto peerPort1 = (*peer.begin())->address().port();
+    EXPECT_EQ(peer.size(), 1ul);
+
+    // second request
+    res = client.Get("/read/hostname");
+    EXPECT_EQ(res->status, 200);
+    peer           = stats.getAllPeer();
+    auto peerPort2 = (*peer.begin())->address().port();
+    // first and second use the same connection
+    EXPECT_EQ(peerPort1, peerPort2);
+
+    // The server checks the connection status once every 500 milliseconds.
+    // wait for timeout, check whether the server has closed the connection
+    std::this_thread::sleep_for(KEEPALIVE_TIMEOUT + std::chrono::milliseconds(700));
+    peer = stats.getAllPeer();
+    EXPECT_EQ(peer.size(), 0ul);
+
+    stats.shutdown();
+}
+
+TEST(rest_server_test, keepalive_client_timeout)
+{
+    int thr = 1;
+    Address addr(Ipv4::loopback(), Port(0));
+    StatsEndpoint stats(addr);
+    stats.init(thr);
+    stats.start();
+    Port port = stats.getPort();
+
+    {
+        httplib::Client client("localhost", port);
+        client.set_keep_alive(true);
+
+        auto res = client.Get("/read/hostname");
+        EXPECT_EQ(res->status, 200);
+        auto peer = stats.getAllPeer();
+        EXPECT_EQ(peer.size(), 1ul);
+        // The client actively closes the connection
+    }
+    // The server checks the connection status once every 500 milliseconds.
+    // check whether the server has closed the connection
+    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    auto peer = stats.getAllPeer();
+    EXPECT_EQ(peer.size(), 0ul);
+
+    stats.shutdown();
+}
+
+TEST(rest_server_test, keepalive_multithread_client_request)
+{
+    int thr = 1;
+    Address addr(Ipv4::loopback(), Port(0));
+    StatsEndpoint stats(addr);
+    stats.init(thr);
+    stats.start();
+    Port port = stats.getPort();
+
+    unsigned long THR_NUMBER = 10;
+    std::vector<std::thread> threads;
+    for (unsigned long i = 0; i < THR_NUMBER; ++i)
+    {
+        threads.push_back(std::thread([&port] {
+            httplib::Client client("localhost", port);
+            client.set_keep_alive(true);
+
+            auto res = client.Get("/read/hostname");
+            EXPECT_EQ(res->status, 200);
+            std::this_thread::sleep_for(KEEPALIVE_TIMEOUT + std::chrono::milliseconds(700));
+        }));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    auto peer = stats.getAllPeer();
+    EXPECT_EQ(peer.size(), THR_NUMBER);
+
+    for (auto it = threads.begin(); it != threads.end(); ++it)
+    {
+        it->join();
+    }
+    peer = stats.getAllPeer();
+    EXPECT_EQ(peer.size(), 0ul);
 
     stats.shutdown();
 }

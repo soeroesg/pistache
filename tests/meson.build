@@ -4,7 +4,11 @@
 
 curl_dep = dependency('libcurl')
 gtest_main_dep = dependency('gtest', main: true, fallback: ['gtest', 'gtest_main_dep'])
+gmock_dep = dependency('gmock', version: '>=1.11.0', fallback: ['gtest', 'gmock_dep'])
 cpp_httplib_dep = dependency('cpp-httplib', fallback: ['cpp-httplib', 'cpp_httplib_dep'])
+brotli_dep = dependency('', required: false)
+
+subdir('helpers')
 
 pistache_test_files = [
 	'async_test',
@@ -32,6 +36,7 @@ pistache_test_files = [
 	'threadname_test',
 	'typeid_test',
 	'view_test',
+	'helpers_test',
 ]
 
 network_tests = ['net_test']
@@ -39,8 +44,16 @@ network_tests = ['net_test']
 flaky_tests = []
 
 if get_option('PISTACHE_USE_SSL')
-	pistache_test_files += 'https_server_test'
+	pistache_test_files += [
+		'https_server_test',
+		'listener_tls_test'
+	]
 	subdir('certs')
+endif
+
+# If built with Brotli compression support enable decoder for unit testing...
+if get_option('PISTACHE_USE_CONTENT_ENCODING_BROTLI')
+    brotli_dep = dependency('libbrotlidec')
 endif
 
 foreach test_name : pistache_test_files
@@ -58,10 +71,13 @@ foreach test_name : pistache_test_files
 			test_name+'.cc',
 			dependencies: [
 				pistache_dep,
+				tests_helpers_dep,
 				deps_libpistache,
 				gtest_main_dep,
+				gmock_dep,
 				curl_dep,
-				cpp_httplib_dep
+				cpp_httplib_dep,
+				brotli_dep
 			]
 		),
 		timeout: 600,

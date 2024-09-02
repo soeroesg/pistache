@@ -12,7 +12,9 @@ install_headers(
 	'config.h',
 	'cookie.h',
 	'description.h',
+	'emosandlibevdefs.h',
 	'endpoint.h',
+	'eventmeth.h',
 	'errors.h',
 	'flags.h',
 	'http_defs.h',
@@ -28,7 +30,11 @@ install_headers(
 	'net.h',
 	'os.h',
 	'peer.h',
+	'pist_quote.h',
+	'pist_check.h',
+	'pist_syslog.h',
 	'prototype.h',
+	'pist_timelog.h',
 	'reactor.h',
 	'route_bind.h',
 	'router.h',
@@ -44,4 +50,6 @@ install_headers(
 	'view.h',
 	subdir: 'pistache')
 
-install_subdir('serializer', install_dir: get_option('includedir')/'pistache')
+if get_option('PISTACHE_USE_RAPIDJSON')
+    install_subdir('serializer', install_dir: get_option('includedir')/'pistache')
+endif
