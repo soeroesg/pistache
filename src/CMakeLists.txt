@@ -89,6 +89,26 @@ if (PISTACHE_USE_SSL)
     endif ()
 endif ()
 
+
+# cmake package config
+include(CMakePackageConfigHelpers)
+set(CONFIG_INSTALL_DIR "lib/cmake/${PROJECT_NAME}")
+set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(PROJECT_CONFIG_FILE "${GENERATED_DIR}/${PROJECT_NAME}Config.cmake")
+set(TARGETS_EXPORT_NAME "${PROJECT_NAME}Targets")
+
+configure_package_config_file(
+    "${PROJECT_SOURCE_DIR}/cmake/pistacheConfig.cmake.in"
+    "${PROJECT_CONFIG_FILE}"
+    INSTALL_DESTINATION "${CONFIG_INSTALL_DIR}"
+)
+set(VERSION_CONFIG_FILE "${GENERATED_DIR}/${PROJECT_NAME}ConfigVersion.cmake")
+write_basic_package_version_file(
+    "${VERSION_CONFIG_FILE}"
+    VERSION "${${PROJECT_NAME}_VERSION}"
+    COMPATIBILITY SameMajorVersion
+)
+
 # cmake package install
 include(GNUInstallDirs)
 install(
@@ -116,4 +136,3 @@ install(
     DESTINATION ${CONFIG_INSTALL_DIR}
     NAMESPACE "${PROJECT_NAME}::"
 )
-

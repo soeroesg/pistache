@@ -96,24 +96,6 @@ configure_file (
     @ONLY
 )
 
-# cmake package config
-set(CONFIG_INSTALL_DIR "lib/cmake/${PROJECT_NAME}")
-set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-set(VERSION_CONFIG_FILE "${GENERATED_DIR}/${PROJECT_NAME}ConfigVersion.cmake")
-set(PROJECT_CONFIG_FILE "${GENERATED_DIR}/${PROJECT_NAME}Config.cmake")
-set(TARGETS_EXPORT_NAME "${PROJECT_NAME}Targets")
-include(CMakePackageConfigHelpers)
-configure_package_config_file(
-    "${PROJECT_SOURCE_DIR}/cmake/pistacheConfig.cmake.in"
-    "${PROJECT_CONFIG_FILE}"
-    INSTALL_DESTINATION "${CONFIG_INSTALL_DIR}"
-)
-write_basic_package_version_file(
-    "${VERSION_CONFIG_FILE}"
-    VERSION "${${PROJECT_NAME}_VERSION}"
-    COMPATIBILITY SameMajorVersion
-)
-
 # src
 add_subdirectory(src)
 
